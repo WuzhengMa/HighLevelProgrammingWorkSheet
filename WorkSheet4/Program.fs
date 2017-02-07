@@ -1,4 +1,4 @@
-﻿type Command = 
+type Command = 
     | Read of string 
     | Write of string * int 
     | Assign of string * string
@@ -10,96 +10,104 @@ type Response =
     | DataError // if the required data does not exist
     | OK // for valid commads that return no data
 
-type DataType = 
-    {key:string; value:int}
-
-/// character is white sppace
-let isWhiteSpace (c : char) = List.contains c [ ' '; '\n'; '\t'; '\r'; '\f' ]
-
-/// character is alphabetic
-let isAlpha (c : char) = List.contains c ([ 'a'..'z' ] @ [ 'A'..'Z' ])
-
-/// character is a decimal digit
-let isDigit (c : char) = List.contains c [ '0'..'9' ]
-
-/// character is alphanumeic (allowed in symbol)
-let isAlphaNum (c : char) = isAlpha c || isDigit c
-
-/// convert string into char list
-let explode (str : string) = str |> List.ofSeq
-
-/// convert char list into string
-let implode (x : char list) = x |> System.String.Concat
-
-
-
-
-
-let environment command = 
+let makeEnvironment ()= 
     let mutable state = Map.empty
 
-    let readData varName = 
-        let found = state.TryFind varName 
-        match found with
-        | Some value -> VarValue (value)
-        | None -> DataError
+    let environment command = 
+        /// character is a decimal digit
+        let rec isNumber (c : char list) = 
+            let rec isDigit (c : char list) = 
+                match c with
+                | ch :: rest when List.contains ch [ '0'..'9' ] -> isDigit(rest)
+                | [] -> true
+                | _ -> false
 
-    let writeData (varName, value) = 
-        let addedMap = state.Add(varName, value)
-        let found = addedMap.TryFind varName
-        match found with
-        | Some value -> OK
-        | None -> DataError
-
-    let assignData (varDest, varSrc) = 
-        let SrcData = 
-            let found = state.TryFind varSrc
+            match c with
+            | ch :: rest when List.contains ch ['+';'-'] -> isDigit (rest)
+            | c -> isDigit (c)
+                
+        let readData varName = 
+            let found = state.TryFind varName 
             match found with
             | Some value -> VarValue (value)
             | None -> DataError
 
-        let removedTree = state.Remove(varDest)
-
-        match SrcData with
-        | VarValue (value) -> 
-            let addedMap = removedTree.Add(varDest, value)
-            let found = addedMap.TryFind varDest
+        let writeData (varName, value) = 
+            state <- state.Add(varName, value)
+            let found = state.TryFind varName
             match found with
             | Some value -> OK
             | None -> DataError
-        | _ -> DataError
 
-    let parseString (command:string) = 
-        let commandArr = command.Split [|' '; '\n'; '\t'; '\r'; '\f'|]
+        let assignData (varDest, varSrc) = 
+            let SrcData = 
+                let found = state.TryFind varSrc
+                match found with
+                | Some value -> VarValue (value)
+                | None -> DataError
+
+            let removedTree = state.Remove(varDest)
+
+            match SrcData with
+            | VarValue (value) -> 
+                state <- removedTree.Add(varDest, value)
+                let found = state.TryFind varDest
+                match found with
+                | Some value -> OK
+                | None -> DataError
+            | _ -> DataError
+
+        let parseString (command:string) = 
+            let commandArr = command.Split [|' '; '\n'; '\t'; '\r'; '\f'|] |> List.ofArray
         
-        let(|READ|_|) commandArr = 
-            for word in commandArr do
-                if word = "READ" then
-                    Some(commandArr)
-                else
-                    None
+            let parseVariableName (commandType, varList) = 
+                match varList with
+                | varName :: rest when varName <> "" && commandType = "READ" -> readData (varName)
+                | varName :: rest when varName <> "" && commandType = "WRITE" -> 
+                    match rest with
+                    | value :: tail when value <> "" && isNumber (value|>List.ofSeq) -> writeData (varName, (value|>int))
+                    | _ -> ParseError
+                | varName1 :: rest when varName1 <> "" && commandType = "ASSIGN" ->
+                    match rest with
+                    | varName2 :: tail when varName2 <> "" -> assignData(varName1, varName2)
+                    | _ -> ParseError
+                | _ -> ParseError
 
-        let getVariableName commandArr = 
-            match commandArr with
-            | word :: rest when word <> "" -> word
-            | _ -> ""
+            let parseCommandType command = 
+                match commandArr with
+                | "READ" :: tail -> parseVariableName ("READ", tail)
+                | "WRITE" :: tail -> parseVariableName ("WRITE", tail)
+                | "ASSIGN" :: tail -> parseVariableName ("ASSIGN", tail)
+                | _ -> ParseError      
+            parseCommandType command
 
-        let execute (commandArr:string array) = 
-            match commandArr with
-            | READ commandArr -> readData (getVariableName (Array.sub commandArr (index+1) (Array.length commandArr)))
+        let rec parseCommand command =
+            match command with
+            | Read (varName) -> readData varName
+            | Write (varName, value) -> writeData (varName, value)
+            | Assign (varDest, varSrc) -> assignData (varDest, varSrc)
+            | Parse (commandStr) -> parseString (commandStr)
             | _ -> ParseError
+        parseCommand command
 
-        execute commandArr
+   
+    printfn "BeforeWrite state:%A, response: %A" state (environment (Write("x", 2)))
+    printfn "BeforeWrite state:%A, response: %A" state (environment (Write("y", 3)))
+    printfn "AfterWrite state: %A, response: %A" state (environment (Assign("x", "y")))
+    printfn "AfterWrite state: %A, response: %A" state (environment (Read("x")))
+     
+    printfn "--------------------------------------------"
+    
+    printfn "AfterWrite state: %A, response: %A" state (environment (Parse("WRITE y 12")))
+    printfn "AfterWrite state: %A, response: %A" state (environment (Parse("WRITE x 22")))
+    printfn "AfterWrite state: %A, response: %A" state (environment (Parse("ASSIGN y x")))
+    printfn "AfterWrite state: %A, response: %A" state (environment (Parse("READ y")))
 
-
-    let rec parseCommand command =
-        match command with
-        | Read (varName) -> readData varName
-        | Write (varName, value) -> writeData (varName, value)
-        | Assign (varDest, varSrc) -> assignData (varDest, varSrc)
-        | Parse (commandStr) -> parseString (commandStr)
-        | _ -> ParseError
-    parseCommand command
-
-printfn "anything: %A" (environment (Assign("x", "x1")))
+    printfn "--------------------------------------------"
+    
+    printfn "AfterWrite state: %A, response: %A" state (environment (Parse("WRITE y -12")))
+    printfn "AfterWrite state: %A, response: %A" state (environment (Parse("WRITE y -2-2")))
+    printfn "AfterWrite state: %A, response: %A" state (environment (Parse("READ y")))
+    
+makeEnvironment ()
 System.Console.ReadLine() // prevent the program from terminating
